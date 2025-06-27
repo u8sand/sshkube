@@ -1,9 +1,16 @@
 ''' Usage:
+# saves this server for future use
+sshkube -s sshkube.dev.maayanlab.cloud install
+
 # launches socks5 proxy and configures kubectl
-$(sshkube -s sshkube.dev.maayanlab.cloud init)
+$(sshkube init)
 # now you can use kubectl/helm
 kubectl get nodes
 helm list
+
+# alternatively you can do
+sshkube run kubectl get nodes
+sshkube run helm list
 '''
 import click
 import pathlib
@@ -71,6 +78,15 @@ def make_ssh_cmd(flags, server, cmd):
 
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
+def install(server):
+  _install(server=server)
+
+def _install(*, server):
+  workdir.mkdir(parents=True, exist_ok=True)
+  import dotenv; dotenv.set_key(workdir/'.env', 'SSHKUBE_SERVER', server)
+
+@cli.command()
+@click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
 def kubeconfig(server):
   _kubeconfig(server=server)
 
@@ -83,17 +99,6 @@ def _kubeconfig(*, server):
     raise RuntimeError('Failed to get kubeconfig')
   else:
     (workdir/'kube.config').write_bytes(kube_config)
-
-@cli.command()
-def kill_server():
-  _kill_server()
-
-def _kill_server():
-  ''' Inspired by adb kill-server
-  '''
-  pid = PidFile.read()
-  if pid: pid.kill()
-  (workdir/'kube.config').unlink(missing_ok=True)
 
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
@@ -126,6 +131,17 @@ def _start_server(*, server, force):
       raise
 
 @cli.command()
+def kill_server():
+  _kill_server()
+
+def _kill_server():
+  ''' Inspired by adb kill-server
+  '''
+  pid = PidFile.read()
+  if pid: pid.kill()
+  (workdir/'kube.config').unlink(missing_ok=True)
+
+@cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
 def init(server):
   _init(server=server)
@@ -146,26 +162,32 @@ def _init(*, server):
     sep='\n',
   )
 
-@cli.command()
+@cli.command(context_settings=dict(
+  ignore_unknown_options=True,
+  allow_interspersed_args=False,
+))
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
-def install(server):
-  _install(server=server)
-
-def _install(*, server):
-  workdir.mkdir(parents=True, exist_ok=True)
-  import dotenv; dotenv.set_key(workdir/'.env', 'SSHKUBE_SERVER', server)
-
-@cli.command(context_settings=dict(ignore_unknown_options=True))
-@click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
-@click.argument('args', nargs=-1)
+@click.argument('args', nargs=-1, type=click.UNPROCESSED)
 def run(server, args):
   _run(server=server, args=args)
 
 def _run(*, server, args):
+  '''
+  Usage: sshkube run kubectl help
+  '''
+  pid = PidFile.read()
+  if pid is None:
+    _start_server(server=server, force=False)
+    pid = PidFile.read()
+    assert pid is not None
+  #
   import os, shutil
-  cmd, *cmd_args = make_ssh_cmd([], server, args)
-  cmd = shutil.which(cmd)
-  os.execv(cmd, [cmd, *cmd_args])
+  cmd = shutil.which('env')
+  os.execv(cmd, [
+    f"KUBECONFIG={workdir/'kube.config'}",
+    f"HTTPS_PROXY=socks5://127.0.0.1:{pid.port}",
+    *args,
+  ])
 
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
