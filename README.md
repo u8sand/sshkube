@@ -21,7 +21,7 @@ Configure access to a kubernetes cluster over ssh:
 # create demo cluster
 k3d cluster create -a1 -p "80:80@loadbalancer" -p "443:443@loadbalancer"
 
-DOMAIN=sshkube.daniel-pc.u8sand.net
+DOMAIN=sshkube.localhost.u8sand.net
 
 # install the sshkube chart
 #   users specified line-by-line in githubUsers will be able to authenticate against the cluster
@@ -44,7 +44,8 @@ kubectl create clusterrolebinding u8sand --clusterrole=cluster-admin --serviceac
 # any user that has been granted access can use sshkube like so:
 
 # the client library can be configured to use the public server we've deployed
-sshkube install -s ${DOMAIN}
+# specify your github username and github identity file
+sshkube install -s ${DOMAIN} -u u8sand -i ~/.ssh/id_ed25519
 
 # we can run commands through ssh
 sshkube run kubectl get secret
