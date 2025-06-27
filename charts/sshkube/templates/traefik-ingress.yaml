@@ -1,0 +1,20 @@
+{{- if eq (.Values.ingress | default dict).type "traefik" }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  entrypoints:
+  - websecure
+  routes:
+  - match: HostSNI(`{{ .Values.ingress.domain }}`)
+    services:
+    - name: {{ .Release.Name }}
+      port: 22
+  tls:
+    # secretName: {{ .Release.Name }}-tls
+    certResolver: {{ .Values.ingress.certResolver }}
+    # domains:
+    # - main: {{ .Values.ingress.domain }}
+{{- end }}

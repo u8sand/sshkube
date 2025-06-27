@@ -1,0 +1,103 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-hostkeys
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: {{ (.Values.storage | default dict).class }}
+  volumeMode: Filesystem
+---
+apiVersion: v1
+data:
+  content: {{ .Values.githubUsers | toJson }}
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-github-users
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}
+rules:
+- apiGroups: [""]
+  resources: ["*"]
+  verbs: ["*"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["*"]
+  verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}
+subjects:
+- kind: ServiceAccount
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Release.Name }}
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Release.Name }}
+    spec:
+      containers:
+      - image: u8sand/sshkube-server:{{ .Chart.AppVersion }}
+        imagePullPolicy: Always
+        name: sshkube-server
+        ports:
+        - containerPort: 22
+          name: tcp-22
+          protocol: TCP
+        volumeMounts:
+        - mountPath: /data/ssh-host-keys
+          name: hostkeys
+          subPath: data
+        - mountPath: /data/users
+          name: github-users
+          subPath: content
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      serviceAccountName: {{ .Release.Name }}
+      volumes:
+      - name: hostkeys
+        persistentVolumeClaim:
+          claimName: {{ .Release.Name }}-hostkeys
+      - configMap:
+          name: {{ .Release.Name }}-github-users
+        name: github-users
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  ports:
+  - name: tcp-22
+    port: 22
+    protocol: TCP
+    targetPort: 22
+  selector:
+    app.kubernetes.io/name: {{ .Release.Name }}

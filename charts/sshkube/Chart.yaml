@@ -1,0 +1,6 @@
+apiVersion: v2
+appVersion: 0.1.0
+description: A helm chart for deploying sshkube
+name: sshkube
+type: application
+version: 0.0.1

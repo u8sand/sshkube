@@ -1,0 +1,55 @@
+services:
+  ingress:
+    image: docker.io/library/traefik:v3.4
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entryPoints.web.address=:80"
+      - "--entryPoints.websecure.address=:443"
+      # - "--certificatesresolvers.prod.acme.tlsChallenge=true"
+      # - "--certificatesresolvers.prod.acme.email=u8sand@gmail.com"
+      # - "--certificatesresolvers.prod.acme.storage=/data/acme.json"
+    restart: unless-stopped
+    ports:
+      - 80:80
+      - 443:443/tcp
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik:/data
+    x-kubernetes:
+      exclude: true
+
+  sshkube-server:
+    build: server
+    image: u8sand/sshkube-server:0.1.0
+    configs:
+      - source: github-users
+        target: /data/users
+    ports:
+      - 22/tcp
+    volumes:
+      - sshkube-server-hostkeys:/data/ssh-host-keys
+    labels:
+      - traefik.enable=true
+      - traefik.tcp.services.sshkube-server.loadbalancer.server.port=22
+      - traefik.tcp.routers.sshkube-server.service=sshkube-server
+      - traefik.tcp.routers.sshkube-server.rule=HostSNI(`sshkube.daniel-pc.u8sand.net`)
+      - traefik.tcp.routers.sshkube-server.tls=true
+      # - traefik.tcp.routers.sshkube-server.tls.certresolver=prod
+      - traefik.tcp.routers.sshkube-server.entrypoints=websecure
+    x-kubernetes:
+      annotations:
+        maayanlab.cloud/ingress: https://sshkube.daniel-pc.u8sand.net
+
+volumes:
+  sshkube-server-hostkeys:
+  traefik:
+
+configs:
+  github-users:
+    content: |
+      u8sand
+
+x-kubernetes:
+  name: sshkube
+  namespace: sshkube

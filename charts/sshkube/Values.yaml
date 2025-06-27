@@ -1,0 +1,10 @@
+ingress:
+  type: traefik
+  domain: sshkube.daniel-pc.u8sand.net
+  certResolver: prod
+
+storage:
+  class: ''
+
+githubUsers: |
+  u8sand
