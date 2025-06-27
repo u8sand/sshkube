@@ -1,8 +1,8 @@
 FROM alpine
 
-VOLUME [ "/data/ssh-host-keys", "/data/users" ]
+VOLUME [ "/data" ]
 
-RUN apk add --no-cache curl openrc openssh kubectl \
+RUN apk add --no-cache curl openrc openssh python3 kubectl \
   && sed -i \
     -e 's/^AllowTcpForwarding .\+/AllowTcpForwarding yes/' \
     -e 's/^#UseDNS .\+/UseDNS no/' \
