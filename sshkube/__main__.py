@@ -12,6 +12,7 @@ helm list
 sshkube run kubectl get nodes
 sshkube run helm list
 '''
+import sys
 import click
 import pathlib
 import subprocess
@@ -33,6 +34,21 @@ def get_free_port():
   _, port = sock.getsockname()
   sock.close()
   return port
+
+def wait_for_port(port, timeout=1, backoff=1, retries=3):
+  import time, socket
+  for i in range(retries):
+    if i > 0: time.sleep(backoff)
+    try:
+      sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+      sock.settimeout(timeout)
+      result = sock.connect_ex(('', port))
+      if result == 0: return
+    except socket.error:
+      pass
+    finally:
+      sock.close()
+  raise RuntimeError(f"Proxy server didn't start!")
 
 class PidFile:
   pidfile = workdir/'pid'
@@ -67,43 +83,67 @@ class PidFile:
     os.kill(self.pid, signal.SIGINT)
     PidFile.pidfile.unlink()
 
-def make_ssh_cmd(flags, server, cmd):
-  import sys, shutil
-  socat = shutil.which('socat')
-  return ['ssh', '-o',
-          f"ProxyCommand {socat} - openssl:{server}:443,verify=0" if socat is not None else f"ProxyCommand {sys.executable} -m sshkube_client openssl {server}",
-          *flags,
-          server,
-          *cmd]
+def make_ssh_cmd(*, server, cmd=[], flags=[]):
+  return ['ssh', *flags, server, *cmd]
 
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
-def install(server):
-  _install(server=server)
+@click.option('-u', '--user', type=str, default='')
+@click.option('-i', '--identity-file', type=str, default='')
+@click.option('--verify', type=int, default=1)
+@click.option('-v', '--verbose', type=bool, is_flag=True, default=False)
+def install(*, server, user, identity_file, verify, verbose):
+  _install(server=server, user=user, identity_file=identity_file, verify=verify, verbose=verbose)
 
-def _install(*, server):
+def _install(*, server, user, identity_file, verify, verbose):
+  # instal sshkube server
   workdir.mkdir(parents=True, exist_ok=True)
-  import dotenv; dotenv.set_key(workdir/'.env', 'SSHKUBE_SERVER', server)
+  dotenv.set_key(workdir/'.env', 'SSHKUBE_SERVER', server)
+
+  # include sshkube config in sshconfig
+  ssh_dir = pathlib.Path('~/.ssh/').expanduser()
+  ssh_dir.mkdir(parents=True, exist_ok=True, mode=700)
+  add_ssh_config = f"Include {str(workdir/'config')}"
+  ssh_config = (ssh_dir/'config').read_text() if (ssh_dir/'config').exists() else ''
+  if add_ssh_config not in ssh_config.splitlines():
+    ssh_config = add_ssh_config + '\n' + ssh_config
+    (ssh_dir/'config').write_text(ssh_config)
+
+  # create sshkube sshconfig
+  (workdir/'config').write_text('\n'.join(filter(None, [
+    f"Host {server}",
+    user and f"    User {user}",
+    identity_file and f"    IdentityFile {identity_file}",
+    identity_file and f"    IdentitiesOnly yes",
+    f"    ProxyCommand env PYTHONPATH={':'.join(sys.path)} {sys.executable} -m {__package__} openssl -s {server} --verify={verify}",
+  ]))+'\n')
+
+  # verify connection
+  try:
+    subprocess.check_call(make_ssh_cmd(server=server, flags=['-v'] if verbose else [], cmd=['echo', 'Success!']), stdout=sys.stdout, stderr=sys.stderr)
+  except subprocess.CalledProcessError as e:
+    raise click.UsageError('Failed to connect, check all options and any above errors') from e
+
 
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
-def kubeconfig(server):
+def kubeconfig(*, server):
   _kubeconfig(server=server)
 
 def _kubeconfig(*, server):
   ''' get kube config from remote
   '''
   try:
-    kube_config = subprocess.check_output(make_ssh_cmd([], server, ['cat', '~/.kube/config']))
+    kube_config = subprocess.check_output(make_ssh_cmd(server=server, cmd=['cat', '~/.kube/config']))
   except subprocess.CalledProcessError:
-    raise RuntimeError('Failed to get kubeconfig')
+    raise click.UsageError('Failed to get kubeconfig')
   else:
     (workdir/'kube.config').write_bytes(kube_config)
 
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
 @click.option('-f', '--force', type=bool, is_flag=True)
-def start_server(server, force):
+def start_server(*, server, force):
   ''' Inspired by adb start-server
   '''
   _start_server(server=server, force=force)
@@ -117,18 +157,19 @@ def _start_server(*, server, force):
       return
   #
   port = get_free_port()
-  proc = subprocess.Popen(make_ssh_cmd([f"-ND{port}"], server, []), start_new_session=True)
+  proc = subprocess.Popen(make_ssh_cmd(server=server, flags=[f"-ND{port}"]), start_new_session=True)
   try:
+    wait_for_port(port)
     PidFile(pid=proc.pid, port=port).write()
-  except RuntimeError:
+  except RuntimeError as e:
     proc.kill()
-    raise
+    raise click.UsageError('Proxy server failed to start..') from e
   else:
     try:
       _kubeconfig(server=server)
-    except RuntimeError:
+    except RuntimeError as e:
       proc.kill()
-      raise
+      raise click.UsageError('Failed to get kubeconfig from server..') from e
 
 @cli.command()
 def kill_server():
@@ -143,7 +184,7 @@ def _kill_server():
 
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
-def init(server):
+def init(*, server):
   _init(server=server)
 
 def _init(*, server):
@@ -168,7 +209,7 @@ def _init(*, server):
 ))
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
 @click.argument('args', nargs=-1, type=click.UNPROCESSED)
-def run(server, args):
+def run(*, server, args):
   _run(server=server, args=args)
 
 def _run(*, server, args):
@@ -191,14 +232,17 @@ def _run(*, server, args):
 
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
-def openssl(server):
-  _openssl(server=server)
+@click.option('--verify', type=int, default=1)
+def openssl(*, server, verify):
+  _openssl(server=server, verify=verify)
 
-def _openssl(*server):
+def _openssl(*, server, verify):
+  import shutil
   socat = shutil.which('socat')
   if socat:
-    subprocess.run([socat, '-', f"OPENSSL:{server}:443"])
+    subprocess.run([socat, '-', f"openssl:{server}:443,verify={verify}"])
   else:
+    # TODO
     # implement socat's functionality in native python
     import os
     import ssl
@@ -211,7 +255,7 @@ def _openssl(*server):
       flags = fcntl.fcntl(fd, fcntl.F_GETFL)
       fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
     MTU = 4096
-    context = ssl.create_default_context()
+    context = ssl.create_default_context() if verify else ssl._create_unverified_context()
     with socket.create_connection((server, 443)) as sock:
       with context.wrap_socket(sock, server_hostname=server) as ssock:
         ssock.setblocking(False)
