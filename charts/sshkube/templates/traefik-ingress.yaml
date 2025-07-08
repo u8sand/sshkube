@@ -5,7 +5,7 @@ kind: IngressRouteTCP
 metadata:
   name: {{ .Release.Name }}
 spec:
-  entrypoints:
+  entryPoints:
   - websecure
   routes:
   - match: HostSNI(`{{ .Values.ingress.domain }}`)
