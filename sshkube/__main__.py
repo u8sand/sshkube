@@ -225,6 +225,7 @@ def _run(*, server, args):
   import os, shutil
   cmd = shutil.which('env')
   os.execv(cmd, [
+    cmd,
     f"KUBECONFIG={workdir/'kube.config'}",
     f"HTTPS_PROXY=socks5://127.0.0.1:{pid.port}",
     *args,
