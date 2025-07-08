@@ -242,37 +242,12 @@ def _openssl(*, server, verify):
   if socat:
     subprocess.run([socat, '-', f"openssl:{server}:443,verify={verify}"])
   else:
-    # TODO
-    # implement socat's functionality in native python
-    import os
-    import ssl
-    import sys
-    import shutil
-    import select
-    import socket
-    def set_nonblocking(fd):
-      import os, fcntl
-      flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-      fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-    MTU = 4096
-    context = ssl.create_default_context() if verify else ssl._create_unverified_context()
-    with socket.create_connection((server, 443)) as sock:
-      with context.wrap_socket(sock, server_hostname=server) as ssock:
-        ssock.setblocking(False)
-        set_nonblocking(sys.stdin.fileno())
-        while True:
-          rlist, _, _ = select.select([ssock, sys.stdin], [], [])
-          if ssock in rlist:
-              data = ssock.recv(MTU)
-              if not data:
-                  continue
-              sys.stdout.buffer.write(data)
-              sys.stdout.buffer.flush()
-          if sys.stdin in rlist:
-              input_data = os.read(sys.stdin.fileno(), MTU)
-              if not input_data:
-                  continue
-              ssock.sendall(input_data)
+    import asyncio
+    asyncio.new_event_loop().run_until_complete(_async_openssl(server=server, verify=verify))
+
+async def _async_openssl(*, server, verify):
+  from sshkube import socat
+  await socat.socat(socat.cat(), socat.openssl(host=server, port=443, verify=verify))
 
 if __name__ == '__main__':
   cli()
