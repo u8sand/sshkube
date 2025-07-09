@@ -12,13 +12,15 @@ helm list
 sshkube run kubectl get nodes
 sshkube run helm list
 '''
+import os
 import sys
 import click
 import pathlib
 import subprocess
 import dotenv
 
-workdir = pathlib.Path('~/.sshkube/').expanduser()
+dotenv.load_dotenv()
+workdir = pathlib.Path(os.environ.get('SSHKUBE_CONFIG', '~/.sshkube/')).expanduser()
 dotenv.load_dotenv(workdir/'.env')
 
 @click.group()
