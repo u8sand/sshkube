@@ -18,13 +18,11 @@ import pathlib
 import subprocess
 import dotenv
 
-subprocess.CREATE_NEW_PROCESS_GROUP = 0x00000200
-subprocess.DETACHED_PROCESS = 0x00000008
-
 workdir = pathlib.Path('~/.sshkube/').expanduser()
 dotenv.load_dotenv(workdir/'.env')
 
 @click.group()
+@click.version_option()
 def cli(): pass
 
 def get_free_port():
