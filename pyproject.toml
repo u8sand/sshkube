@@ -1,6 +1,6 @@
 [project]
 name = "sshkube"
-version = "0.1.0"
+version = "0.2.0"
 description = "Access kubernetes clusters over ssh"
 authors = [
     {name = "Daniel J. B. Clarke",email = "u8sand@gmail.com"}
