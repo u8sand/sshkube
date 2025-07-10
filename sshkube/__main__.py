@@ -25,6 +25,14 @@ dotenv.load_dotenv()
 workdir = pathlib.Path(os.environ.get('SSHKUBE_CONFIG', '~/.sshkube/')).expanduser()
 dotenv.load_dotenv(workdir/'.env')
 
+def Popen(*args, **kwargs):
+  ''' Fixup some platform-specific oddities
+  '''
+  if sys.platform == 'win32':
+    if kwargs.get('start_new_session'):
+      kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
+  return subprocess.Popen(*args, **kwargs)
+
 @click.group()
 @click.version_option()
 def cli(): pass
@@ -124,7 +132,7 @@ def _install(*, server, user, use_env, identity_file, verify, verbose):
 
   # verify connection
   try:
-    subprocess.check_call(make_ssh_cmd(server=server, flags=['-v'] if verbose else [], cmd=['echo', 'Success!']), stdout=sys.stdout, stderr=sys.stderr)
+    subprocess.check_call(make_ssh_cmd(server=server, flags=['-v'] if verbose else [], cmd=['echo', 'Success!']), stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr)
   except subprocess.CalledProcessError as e:
     raise click.UsageError('Failed to connect, check all options and any above errors') from e
 
@@ -171,7 +179,7 @@ def _start_server(*, server, force):
   k8s_server = kubeconfig_['clusters'][0]['cluster']['server']
   k8s_server_parsed = urlparse(k8s_server)
   port = get_free_port()
-  proc = subprocess.Popen(make_ssh_cmd(server=server, flags=[f"-NL{port}:{k8s_server_parsed.netloc}"]), start_new_session=True)
+  proc = Popen(make_ssh_cmd(server=server, flags=[f"-NL{port}:{k8s_server_parsed.netloc}"]), start_new_session=True)
   try:
     wait_for_port(port)
     PidFile(pid=proc.pid, port=port).write()
@@ -193,6 +201,7 @@ def _kill_server():
   pid = PidFile.read()
   if pid: pid.kill()
   (workdir/'kube.config').unlink(missing_ok=True)
+  (workdir/'proxy.kube.config').unlink(missing_ok=True)
 
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
