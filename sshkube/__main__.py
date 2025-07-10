@@ -126,8 +126,8 @@ def _install(*, server, user, use_env, identity_file, verify, verbose):
     user and f"    User {user}",
     f"    IdentitiesOnly yes",
     identity_file and f"    IdentityFile {identity_file}",
-    use_env and f"    ProxyCommand env PYTHONPATH={':'.join(sys.path)} {sys.executable} -m {__package__} openssl -s {server} --verify={verify}",
-    (not use_env) and f"    ProxyCommand {sys.executable} -m {__package__} openssl -s {server} --verify={verify}",
+    use_env and f"    ProxyCommand env \"PYTHONPATH={':'.join(sys.path)}\" \"{sys.executable}\" -m {__package__} openssl -s {server} --verify={verify}",
+    (not use_env) and f"    ProxyCommand \"{sys.executable}\" -m {__package__} openssl -s {server} --verify={verify}",
   ]))+'\n')
 
   # verify connection
