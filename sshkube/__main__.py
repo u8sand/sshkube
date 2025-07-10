@@ -218,10 +218,16 @@ def _init(*, server):
     pid = PidFile.read()
     assert pid is not None
   #
-  print(
-    f"export KUBECONFIG={workdir/'proxy.kube.config'}",
-    sep='\n',
-  )
+  if sys.platform == 'win32':
+    print(
+      f"set KUBECONFIG={workdir/'proxy.kube.config'}",
+      sep='\n',
+    )
+  else:
+    print(
+      f"export KUBECONFIG={workdir/'proxy.kube.config'}",
+      sep='\n',
+    )
 
 @cli.command(context_settings=dict(
   ignore_unknown_options=True,
