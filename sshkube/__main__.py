@@ -42,7 +42,7 @@ def wait_for_port(port, timeout=1, backoff=1, retries=3):
     try:
       sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
       sock.settimeout(timeout)
-      result = sock.connect_ex(('', port))
+      result = sock.connect_ex(('127.0.0.1', port))
       if result == 0: return
     except socket.error:
       pass
@@ -91,11 +91,12 @@ def make_ssh_cmd(*, server, cmd=[], flags=[]):
 @click.option('-u', '--user', type=str, default='')
 @click.option('-i', '--identity-file', type=str, default='')
 @click.option('--verify', type=int, default=1)
+@click.option('-e', '--use-env', type=bool, is_flag=True, default=False)
 @click.option('-v', '--verbose', type=bool, is_flag=True, default=False)
-def install(*, server, user, identity_file, verify, verbose):
-  _install(server=server, user=user, identity_file=identity_file, verify=verify, verbose=verbose)
+def install(*, server, user, use_env, identity_file, verify, verbose):
+  _install(server=server, user=user, use_env=use_env, identity_file=identity_file, verify=verify, verbose=verbose)
 
-def _install(*, server, user, identity_file, verify, verbose):
+def _install(*, server, user, use_env, identity_file, verify, verbose):
   # instal sshkube server
   workdir.mkdir(parents=True, exist_ok=True)
   dotenv.set_key(workdir/'.env', 'SSHKUBE_SERVER', server)
@@ -115,7 +116,8 @@ def _install(*, server, user, identity_file, verify, verbose):
     user and f"    User {user}",
     identity_file and f"    IdentityFile {identity_file}",
     identity_file and f"    IdentitiesOnly yes",
-    f"    ProxyCommand env PYTHONPATH={':'.join(sys.path)} {sys.executable} -m {__package__} openssl -s {server} --verify={verify}",
+    use_env and f"    ProxyCommand env PYTHONPATH={':'.join(sys.path)} {sys.executable} -m {__package__} openssl -s {server} --verify={verify}",
+    (not use_env) and f"    ProxyCommand {sys.executable} -m {__package__} openssl -s {server} --verify={verify}",
   ]))+'\n')
 
   # verify connection
@@ -222,14 +224,11 @@ def _run(*, server, args):
     pid = PidFile.read()
     assert pid is not None
   #
-  import os, shutil
-  cmd = shutil.which('env')
-  os.execv(cmd, [
-    cmd,
-    f"KUBECONFIG={workdir/'kube.config'}",
-    f"HTTPS_PROXY=socks5://127.0.0.1:{pid.port}",
-    *args,
-  ])
+  subprocess.run(args, env=dict(
+    os.environ,
+    KUBECONFIG=f"{workdir/'kube.config'}",
+    HTTPS_PROXY=f"socks5://127.0.0.1:{pid.port}",
+  ))
 
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
@@ -242,6 +241,9 @@ def _openssl(*, server, verify):
   socat = shutil.which('socat')
   if socat:
     subprocess.run([socat, '-', f"openssl:{server}:443,verify={verify}"])
+  elif sys.platform == 'win32':
+    import winloop
+    winloop.run(_async_openssl(server=server, verify=verify))
   else:
     import asyncio
     asyncio.new_event_loop().run_until_complete(_async_openssl(server=server, verify=verify))

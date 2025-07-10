@@ -43,7 +43,30 @@ files = [
 [package.extras]
 cli = ["click (>=5.0)"]
 
+[[package]]
+name = "winloop"
+version = "0.1.8"
+description = "Windows version of uvloop"
+optional = false
+python-versions = ">=3.8.0"
+groups = ["main"]
+markers = "sys_platform == \"win32\""
+files = [
+    {file = "winloop-0.1.8-cp310-cp310-win_amd64.whl", hash = "sha256:5c871a0d3100ac80ca813294f6c601d4537c2215bf608f395171003cf2540b5f"},
+    {file = "winloop-0.1.8-cp311-cp311-win_amd64.whl", hash = "sha256:d2bbcd6fc2e3eb6b0e15b9641fd1fb80a2e573c9601689ad108815ce1cdaf9bf"},
+    {file = "winloop-0.1.8-cp312-cp312-win_amd64.whl", hash = "sha256:736a21489419369e2affdbc8f274bb0d56df318d58106fc8febf1002ffd450d7"},
+    {file = "winloop-0.1.8-cp313-cp313-win_amd64.whl", hash = "sha256:0c1c2d2087cb2c1b7defefed44bd875c9b040d46a32caa27d1847e06cb4e5f50"},
+    {file = "winloop-0.1.8-cp38-cp38-win_amd64.whl", hash = "sha256:8fb60cad2f25ada8e0c1a9d2eace2d9f54fa28b630102ae5ee3c467c14c90ac3"},
+    {file = "winloop-0.1.8-cp39-cp39-win_amd64.whl", hash = "sha256:c3599890716d229b2b657cf0893bd1c9c14833704529c17d8764bc058f64e598"},
+    {file = "winloop-0.1.8.tar.gz", hash = "sha256:bbb1b8e12bd9d231153e4a143440d862886a67675aa1a0701f98dff42c19d857"},
+]
+
+[package.extras]
+dev = ["Cython (>=3.0,<4.0)", "setuptools (>=60)"]
+docs = ["Sphinx (>=4.1.2,<4.2.0)", "sphinx_rtd_theme (>=0.5.2,<0.6.0)", "sphinxcontrib-asyncio (>=0.3.0,<0.4.0)"]
+test = ["aiohttp (>=3.10.5)", "flake8 (>=5.0,<6.0)", "mypy (>=0.800)", "psutil", "pyOpenSSL (>=23.0.0,<23.1.0)", "pycodestyle (>=2.9.0,<2.10.0)"]
+
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10"
-content-hash = "578de488fefd3228390ca58359c280b10e364f5e4a4365d3d1f41f395952da65"
+content-hash = "04f39e6d54e6c5154f12279e704cec9d0a12efb23a4e27bffc4bdad4372c00e3"
