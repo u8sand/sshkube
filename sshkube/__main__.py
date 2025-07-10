@@ -14,9 +14,11 @@ sshkube run helm list
 '''
 import os
 import sys
+import yaml
 import click
 import pathlib
 import subprocess
+from urllib.parse import urlparse
 import dotenv
 
 dotenv.load_dotenv()
@@ -158,8 +160,18 @@ def _start_server(*, server, force):
     else:
       return
   #
+  try:
+    _kubeconfig(server=server)
+  except RuntimeError as e:
+    proc.kill()
+    raise click.UsageError('Failed to get kubeconfig from server..') from e
+  #
+  with (workdir/'kube.config').open('r') as fr:
+    kubeconfig_ = yaml.safe_load(fr)
+  k8s_server = kubeconfig_['clusters'][0]['cluster']['server']
+  k8s_server_parsed = urlparse(k8s_server)
   port = get_free_port()
-  proc = subprocess.Popen(make_ssh_cmd(server=server, flags=[f"-ND{port}"]), start_new_session=True)
+  proc = subprocess.Popen(make_ssh_cmd(server=server, flags=[f"-NL{port}:{k8s_server_parsed.netloc}"]), start_new_session=True)
   try:
     wait_for_port(port)
     PidFile(pid=proc.pid, port=port).write()
@@ -167,11 +179,9 @@ def _start_server(*, server, force):
     proc.kill()
     raise click.UsageError('Proxy server failed to start..') from e
   else:
-    try:
-      _kubeconfig(server=server)
-    except RuntimeError as e:
-      proc.kill()
-      raise click.UsageError('Failed to get kubeconfig from server..') from e
+    kubeconfig_['clusters'][0]['cluster']['server'] = f"https://127.0.0.1:{port}"
+    with (workdir/'proxy.kube.config').open('w') as fw:
+      yaml.safe_dump(kubeconfig_, fw)
 
 @cli.command()
 def kill_server():
@@ -200,8 +210,7 @@ def _init(*, server):
     assert pid is not None
   #
   print(
-    f"export KUBECONFIG={workdir/'kube.config'}",
-    f"export HTTPS_PROXY=socks5://127.0.0.1:{pid.port}",
+    f"export KUBECONFIG={workdir/'proxy.kube.config'}",
     sep='\n',
   )
 
@@ -226,8 +235,7 @@ def _run(*, server, args):
   #
   subprocess.run(args, env=dict(
     os.environ,
-    KUBECONFIG=f"{workdir/'kube.config'}",
-    HTTPS_PROXY=f"socks5://127.0.0.1:{pid.port}",
+    KUBECONFIG=f"{workdir/'proxy.kube.config'}"
   ))
 
 @cli.command()
