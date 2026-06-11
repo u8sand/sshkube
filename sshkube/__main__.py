@@ -62,15 +62,20 @@ def wait_for_port(port, timeout=1, backoff=1, retries=3):
 
 class PidFile:
   pidfile = workdir/'pid'
-  def __init__(self, *, pid, port):
+  def __init__(self, *, netloc, pid, port):
+    self.netloc = netloc
     self.pid = pid
     self.port = port
 
   @staticmethod
   def read():
     if PidFile.pidfile.exists():
-      pid, _, port = PidFile.pidfile.read_text().partition(':')
-      pidfile = PidFile(pid=int(pid), port=int(port))
+      pid, _, netloc_port = PidFile.pidfile.read_text().partition(':')
+      netloc, _, port = netloc_port.partition(':')
+      if not _:
+        port = netloc
+        netloc = ''
+      pidfile = PidFile(netloc=netloc, pid=int(pid), port=int(port))
       if pidfile.running:
         return pidfile
       else:
@@ -79,7 +84,7 @@ class PidFile:
   def write(self):
     if PidFile.pidfile.exists(): raise RuntimeError('PID file already exists')
     PidFile.pidfile.parent.mkdir(parents=True, exist_ok=True)
-    PidFile.pidfile.write_text(f"{self.pid}:{self.port}")
+    PidFile.pidfile.write_text(f"{self.pid}:{self.netloc}:{self.port}")
 
   @property
   def running(self):
@@ -163,7 +168,7 @@ def start_server(*, server, force):
 def _start_server(*, server, force):
   pid = PidFile.read()
   if pid:
-    if force:
+    if pid.netloc != server or force:
       _kill_server()
     else:
       return
@@ -182,7 +187,7 @@ def _start_server(*, server, force):
   proc = Popen(make_ssh_cmd(server=server, flags=[f"-NL{port}:{k8s_server_parsed.netloc}"]), start_new_session=True)
   try:
     wait_for_port(port)
-    PidFile(pid=proc.pid, port=port).write()
+    PidFile(netloc=server, pid=proc.pid, port=port).write()
   except RuntimeError as e:
     proc.kill()
     raise click.UsageError('Proxy server failed to start..') from e
@@ -212,11 +217,9 @@ def _init(*, server):
   '''
   Usage: eval "$(sshkube init)"
   '''
+  _start_server(server=server, force=False)
   pid = PidFile.read()
-  if pid is None:
-    _start_server(server=server, force=False)
-    pid = PidFile.read()
-    assert pid is not None
+  assert pid is not None
   #
   if sys.platform == 'win32':
     print(
@@ -243,10 +246,9 @@ def _run(*, server, args):
   Usage: sshkube run kubectl help
   '''
   pid = PidFile.read()
-  if pid is None:
-    _start_server(server=server, force=False)
-    pid = PidFile.read()
-    assert pid is not None
+  _start_server(server=server, force=False)
+  pid = PidFile.read()
+  assert pid is not None
   #
   subprocess.run(args, env=dict(
     os.environ,
