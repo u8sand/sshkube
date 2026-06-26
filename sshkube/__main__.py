@@ -13,6 +13,7 @@ sshkube run kubectl get nodes
 sshkube run helm list
 '''
 import os
+import re
 import sys
 import yaml
 import click
@@ -108,6 +109,53 @@ class PidFile:
     os.kill(self.pid, signal.SIGINT)
     PidFile.pidfile.unlink()
 
+class SSHConfigFile:
+  file = workdir/'config'
+
+  @staticmethod
+  def init():
+    # include sshkube config in sshconfig
+    ssh_dir = pathlib.Path('~/.ssh/').expanduser()
+    ssh_dir.mkdir(parents=True, exist_ok=True, mode=700)
+    add_ssh_config = f"Include {str(workdir/'config')}"
+    ssh_config = (ssh_dir/'config').read_text() if (ssh_dir/'config').exists() else ''
+    if add_ssh_config not in ssh_config.splitlines():
+      ssh_config = add_ssh_config + '\n' + ssh_config
+      (ssh_dir/'config').write_text(ssh_config)
+
+  @staticmethod
+  def read():
+    SSHConfigFile.file.parent.mkdir(parents=True, exist_ok=True)
+    current_config = SSHConfigFile.file.read_text() if SSHConfigFile.file.exists() else ''
+    return {
+      m.group(1): m.group(0)
+      for m in re.finditer(r'Host (.+?)(\n +.+)+', current_config)
+    }
+
+  @staticmethod
+  def hosts():
+    return SSHConfigFile.read().keys()
+  
+  @staticmethod
+  def install(*, server, user, identity_file, use_env, verify):
+    SSHConfigFile.init()
+    hosts = SSHConfigFile.read()
+    hosts[server] = '\n'.join(filter(None, [
+      f"Host {server}",
+      user and f"    User {user}",
+      f"    IdentitiesOnly yes",
+      identity_file and f"    IdentityFile {identity_file}",
+      use_env and f"    ProxyCommand env \"PYTHONPATH={':'.join(sys.path)}\" \"{sys.executable}\" -m {__package__} openssl -s {server} --verify={verify}",
+      (not use_env) and f"    ProxyCommand \"{sys.executable}\" -m {__package__} openssl -s {server} --verify={verify}",
+    ]))
+    SSHConfigFile.file.write_text('\n\n'.join(hosts.values()))
+
+  @staticmethod
+  def uninstall(*, server):
+    hosts = SSHConfigFile.read()
+    del hosts[server]
+    SSHConfigFile.file.write_text('\n\n'.join(hosts.values()))
+
 def make_ssh_cmd(*, server, cmd=[], flags=[]):
   return ['ssh', *flags, server, *cmd]
 
@@ -119,47 +167,65 @@ def make_ssh_cmd(*, server, cmd=[], flags=[]):
 @click.option('-e', '--use-env', type=bool, is_flag=True, default=False)
 @click.option('-v', '--verbose', type=bool, is_flag=True, default=False)
 def install(*, server, user, use_env, identity_file, verify, verbose):
+  ''' Install a new server to use with sshkube
+  '''
   _install(server=server, user=user, use_env=use_env, identity_file=identity_file, verify=verify, verbose=verbose)
 
 def _install(*, server, user, use_env, identity_file, verify, verbose):
-  # instal sshkube server
-  workdir.mkdir(parents=True, exist_ok=True)
-  dotenv.set_key(workdir/'.env', 'SSHKUBE_SERVER', server)
-
-  # include sshkube config in sshconfig
-  ssh_dir = pathlib.Path('~/.ssh/').expanduser()
-  ssh_dir.mkdir(parents=True, exist_ok=True, mode=700)
-  add_ssh_config = f"Include {str(workdir/'config')}"
-  ssh_config = (ssh_dir/'config').read_text() if (ssh_dir/'config').exists() else ''
-  if add_ssh_config not in ssh_config.splitlines():
-    ssh_config = add_ssh_config + '\n' + ssh_config
-    (ssh_dir/'config').write_text(ssh_config)
-
-  # create sshkube sshconfig
-  (workdir/'config').write_text('\n'.join(filter(None, [
-    f"Host {server}",
-    user and f"    User {user}",
-    f"    IdentitiesOnly yes",
-    identity_file and f"    IdentityFile {identity_file}",
-    use_env and f"    ProxyCommand env \"PYTHONPATH={':'.join(sys.path)}\" \"{sys.executable}\" -m {__package__} openssl -s {server} --verify={verify}",
-    (not use_env) and f"    ProxyCommand \"{sys.executable}\" -m {__package__} openssl -s {server} --verify={verify}",
-  ]))+'\n')
+  # update sshkube sshconfig
+  SSHConfigFile.install(server=server, user=user, identity_file=identity_file, use_env=use_env, verify=verify)
 
   # verify connection
   try:
     subprocess.check_call(make_ssh_cmd(server=server, flags=['-v'] if verbose else [], cmd=['echo', 'Success!']), stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr)
   except subprocess.CalledProcessError as e:
     raise click.UsageError('Failed to connect, check all options and any above errors') from e
+  
+  _use(server=server)
 
+@cli.command()
+@click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
+def list(*, server):
+  ''' List currently installed servers
+  '''
+  _list(server=server)
+
+def _list(*, server):
+  print('\n'.join(['Servers (* is in use):']+[
+    (' *  ' if server == host else '    ') + host
+    for host in SSHConfigFile.hosts()
+  ]), file=sys.stderr)
+
+@cli.command()
+@click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
+def use(*, server):
+  ''' Use a specific configured server
+  '''
+  _use(server=server)
+
+def _use(*, server):
+  dotenv.set_key(workdir/'.env', 'SSHKUBE_SERVER', server)
+  _list(server=server)
+
+@cli.command()
+@click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
+def uninstall(*, server):
+  ''' Uninstall a previously installed server
+  '''
+  _uninstall(server=server)
+
+def _uninstall(*, server):
+  _kill_server()
+  SSHConfigFile.uninstall(server=server)
 
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
 def kubeconfig(*, server):
+  ''' [internal]: Obtain kubeconfig from remote
+  '''
   _kubeconfig(server=server)
 
 def _kubeconfig(*, server):
-  ''' get kube config from remote
-  '''
   try:
     kube_config = subprocess.check_output(make_ssh_cmd(server=server, cmd=['cat', '~/.kube/config']))
   except subprocess.CalledProcessError:
@@ -213,11 +279,13 @@ def _start_server(*, server, force):
 
 @cli.command()
 def kill_server():
+  ''' [internal]: Explicitly kill the proxy server when something went wrong
+
+  Inspired by adb kill-server
+  '''
   _kill_server()
 
 def _kill_server():
-  ''' Inspired by adb kill-server
-  '''
   pid = PidFile.read()
   if pid: pid.kill()
   (workdir/'kube.config').unlink(missing_ok=True)
@@ -226,13 +294,15 @@ def _kill_server():
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
 def init(*, server):
+  ''' Configure current shell to access the sshkube kubeconfig
+
+  Usage: eval "$(sshkube init)"
+  '''
   _init(server=server)
 
 def _init(*, server):
-  '''
-  Usage: eval "$(sshkube init)"
-  '''
   _start_server(server=server, force=False)
+  _list(server=server)
   pid = PidFile.read()
   assert pid is not None
   #
@@ -254,12 +324,13 @@ def _init(*, server):
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
 @click.argument('args', nargs=-1, type=click.UNPROCESSED)
 def run(*, server, args):
+  ''' Run a command ensuring that the kubeconfig is set properly
+
+  Usage: sshkube run kubectl help
+  '''
   _run(server=server, args=args)
 
 def _run(*, server, args):
-  '''
-  Usage: sshkube run kubectl help
-  '''
   pid = PidFile.read()
   _start_server(server=server, force=False)
   pid = PidFile.read()
@@ -274,6 +345,8 @@ def _run(*, server, args):
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
 @click.option('--verify', type=int, default=1)
 def openssl(*, server, verify):
+  ''' [internal]: proxy stdin <-> ssl
+  '''
   _openssl(server=server, verify=verify)
 
 def _openssl(*, server, verify):
