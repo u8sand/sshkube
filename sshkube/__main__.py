@@ -60,6 +60,16 @@ def wait_for_port(port, timeout=1, backoff=1, retries=3):
       sock.close()
   raise RuntimeError(f"Proxy server didn't start!")
 
+def kubectl_livez(port, timeout=1):
+  import ssl, urllib.request, urllib.error
+  try:
+    with urllib.request.urlopen(f"https://127.0.0.1:{port}/livez", timeout=timeout, context=ssl._create_unverified_context()) as res:
+      return res.getcode()
+  except urllib.error.HTTPError as e:
+    return e.getcode()
+  except:
+    return 600
+
 class PidFile:
   pidfile = workdir/'pid'
   def __init__(self, *, netloc, pid, port):
@@ -168,7 +178,10 @@ def start_server(*, server, force):
 def _start_server(*, server, force):
   pid = PidFile.read()
   if pid:
-    if pid.netloc != server or force:
+    if force or pid.netloc != server:
+      _kill_server()
+    elif kubectl_livez(pid.port) >= 500:
+      # permission denied error is also fine if connection is broken we get a 600
       _kill_server()
     else:
       return
@@ -187,6 +200,8 @@ def _start_server(*, server, force):
   proc = Popen(make_ssh_cmd(server=server, flags=[f"-NL{port}:{k8s_server_parsed.netloc}"]), start_new_session=True)
   try:
     wait_for_port(port)
+    if kubectl_livez(port) >= 500:
+      raise click.UsageError('Kubernetes not available')
     PidFile(netloc=server, pid=proc.pid, port=port).write()
   except RuntimeError as e:
     proc.kill()
