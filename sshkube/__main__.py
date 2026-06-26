@@ -280,7 +280,7 @@ def _openssl(*, server, verify):
   import shutil
   socat = shutil.which('socat')
   if socat:
-    subprocess.run([socat, '-', f"openssl:{server}:443,verify={verify}"])
+    subprocess.run([socat, '-d0', '-', f"openssl:{server}:443,verify={verify}"])
   elif sys.platform == 'win32':
     import winloop
     winloop.run(_async_openssl(server=server, verify=verify))
