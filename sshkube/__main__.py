@@ -217,7 +217,7 @@ def uninstall(*, server):
   _uninstall(server=server)
 
 def _uninstall(*, server):
-  _kill_server()
+  _kill_server(server=server)
   SSHConfigFile.uninstall(server=server)
 
 @cli.command()
@@ -253,10 +253,10 @@ def _start_server(*, server, force):
   pid = PidFile.read(server=server)
   if pid:
     if force:
-      _kill_server()
+      _kill_server(server=server)
     elif kubectl_livez(pid.port) >= 500:
       # permission denied error is also fine if connection is broken we get a 600
-      _kill_server()
+      _kill_server(server=server)
     else:
       return
   #
