@@ -72,30 +72,32 @@ def kubectl_livez(port, timeout=1):
     return 600
 
 class PidFile:
-  pidfile = workdir/'pid'
-  def __init__(self, *, netloc, pid, port):
-    self.netloc = netloc
+  def __init__(self, *, server, pid, port):
+    self.server = server
     self.pid = pid
     self.port = port
+  
+  @property
+  def pidfile(self):
+    return workdir/f"{self.server}.pid"
 
   @staticmethod
-  def read():
-    if PidFile.pidfile.exists():
-      pid, _, netloc_port = PidFile.pidfile.read_text().partition(':')
-      netloc, _, port = netloc_port.partition(':')
-      if not _:
-        port = netloc
-        netloc = ''
-      pidfile = PidFile(netloc=netloc, pid=int(pid), port=int(port))
+  def read(*, server):
+    if (workdir/'pid').exists():
+      print('WARN: removing legacy pid file', file=sys.stderr)
+      (workdir/'pid').unlink()
+    if (workdir/f"{server}.pid").exists():
+      pid, _, port = (workdir/f"{server}.pid").read_text().partition(':')
+      pidfile = PidFile(server=server, pid=int(pid), port=int(port))
       if pidfile.running:
         return pidfile
       else:
-        PidFile.pidfile.unlink()
+        pidfile.pidfile.unlink()
 
   def write(self):
-    if PidFile.pidfile.exists(): raise RuntimeError('PID file already exists')
-    PidFile.pidfile.parent.mkdir(parents=True, exist_ok=True)
-    PidFile.pidfile.write_text(f"{self.pid}:{self.netloc}:{self.port}")
+    if self.pidfile.exists(): raise RuntimeError('PID file already exists')
+    self.pidfile.parent.mkdir(parents=True, exist_ok=True)
+    self.pidfile.write_text(f"{self.pid}:{self.port}")
 
   @property
   def running(self):
@@ -107,7 +109,7 @@ class PidFile:
   def kill(self):
     import os, signal
     os.kill(self.pid, signal.SIGINT)
-    PidFile.pidfile.unlink()
+    self.pidfile.unlink()
 
 class SSHConfigFile:
   file = workdir/'config'
@@ -226,12 +228,18 @@ def kubeconfig(*, server):
   _kubeconfig(server=server)
 
 def _kubeconfig(*, server):
+  if (workdir/'kube.config').exists():
+    print('WARN: removing legacy kube.config file', file=sys.stderr)
+    (workdir/'kube.config').unlink()
+  if (workdir/'proxy.kube.config').exists():
+    print('WARN: removing legacy proxy.kube.config file', file=sys.stderr)
+    (workdir/'proxy.kube.config').unlink()
   try:
     kube_config = subprocess.check_output(make_ssh_cmd(server=server, cmd=['cat', '~/.kube/config']))
   except subprocess.CalledProcessError:
     raise click.UsageError('Failed to get kubeconfig')
   else:
-    (workdir/'kube.config').write_bytes(kube_config)
+    (workdir/f"{server}.kube.config").write_bytes(kube_config)
 
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
@@ -242,9 +250,9 @@ def start_server(*, server, force):
   _start_server(server=server, force=force)
 
 def _start_server(*, server, force):
-  pid = PidFile.read()
+  pid = PidFile.read(server=server)
   if pid:
-    if force or pid.netloc != server:
+    if force:
       _kill_server()
     elif kubectl_livez(pid.port) >= 500:
       # permission denied error is also fine if connection is broken we get a 600
@@ -258,7 +266,7 @@ def _start_server(*, server, force):
     proc.kill()
     raise click.UsageError('Failed to get kubeconfig from server..') from e
   #
-  with (workdir/'kube.config').open('r') as fr:
+  with (workdir/f"{server}.kube.config").open('r') as fr:
     kubeconfig_ = yaml.safe_load(fr)
   k8s_server = kubeconfig_['clusters'][0]['cluster']['server']
   k8s_server_parsed = urlparse(k8s_server)
@@ -268,28 +276,29 @@ def _start_server(*, server, force):
     wait_for_port(port)
     if kubectl_livez(port) >= 500:
       raise click.UsageError('Kubernetes not available')
-    PidFile(netloc=server, pid=proc.pid, port=port).write()
+    PidFile(server=server, pid=proc.pid, port=port).write()
   except RuntimeError as e:
     proc.kill()
     raise click.UsageError('Proxy server failed to start..') from e
   else:
     kubeconfig_['clusters'][0]['cluster']['server'] = f"https://127.0.0.1:{port}"
-    with (workdir/'proxy.kube.config').open('w') as fw:
+    with (workdir/f"{server}.proxy.kube.config").open('w') as fw:
       yaml.safe_dump(kubeconfig_, fw)
 
 @cli.command()
-def kill_server():
+@click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
+def kill_server(*, server):
   ''' [internal]: Explicitly kill the proxy server when something went wrong
 
   Inspired by adb kill-server
   '''
-  _kill_server()
+  _kill_server(server=server)
 
-def _kill_server():
-  pid = PidFile.read()
+def _kill_server(*, server):
+  pid = PidFile.read(server=server)
   if pid: pid.kill()
-  (workdir/'kube.config').unlink(missing_ok=True)
-  (workdir/'proxy.kube.config').unlink(missing_ok=True)
+  (workdir/f"{server}.kube.config").unlink(missing_ok=True)
+  (workdir/f"{server}.proxy.kube.config").unlink(missing_ok=True)
 
 @cli.command()
 @click.option('-s', '--server', envvar='SSHKUBE_SERVER', type=str, required=True)
@@ -303,17 +312,17 @@ def init(*, server):
 def _init(*, server):
   _start_server(server=server, force=False)
   _list(server=server)
-  pid = PidFile.read()
+  pid = PidFile.read(server=server)
   assert pid is not None
   #
   if sys.platform == 'win32':
     print(
-      f"set KUBECONFIG={workdir/'proxy.kube.config'}",
+      f"set KUBECONFIG={workdir/f"{server}.proxy.kube.config"}",
       sep='\n',
     )
   else:
     print(
-      f"export KUBECONFIG={workdir/'proxy.kube.config'}",
+      f"export KUBECONFIG={workdir/f"{server}.proxy.kube.config"}",
       sep='\n',
     )
 
@@ -331,14 +340,14 @@ def run(*, server, args):
   _run(server=server, args=args)
 
 def _run(*, server, args):
-  pid = PidFile.read()
+  pid = PidFile.read(server=server)
   _start_server(server=server, force=False)
-  pid = PidFile.read()
+  pid = PidFile.read(server=server)
   assert pid is not None
   #
   subprocess.run(args, env=dict(
     os.environ,
-    KUBECONFIG=f"{workdir/'proxy.kube.config'}"
+    KUBECONFIG=str(workdir/f"{server}.proxy.kube.config"),
   ))
 
 @cli.command()
