@@ -65,7 +65,7 @@ spec:
     spec:
       containers:
       - image: u8sand/sshkube-server:{{ .Chart.AppVersion }}
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         name: sshkube-server
         ports:
         - containerPort: 22

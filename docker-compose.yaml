@@ -1,7 +1,12 @@
 services:
   sshkube-server:
-    build: server
-    image: u8sand/sshkube-server:0.1.1
+    build:
+      context: server
+      platforms:
+      - linux/amd64
+      - linux/arm64
+      - linux/arm/v7
+    image: u8sand/sshkube-server:0.1.2
     configs:
       - source: github-users
         target: /data/users
